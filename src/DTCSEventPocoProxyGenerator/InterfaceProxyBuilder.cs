@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -31,14 +32,25 @@ namespace DTCSEventPocoProxyGenerator
       }
     }
 
+    private static readonly object GetProxyTypeLock = new object();
+
     public Type GetProxyType(Type interfaceType)
     {
-      return _interfaceTypeMapper.GetOrAdd(interfaceType, ProxyFactory);
+      lock (GetProxyTypeLock)
+      {
+        if (interfaceType == null) throw new ArgumentNullException(nameof(interfaceType));
+        return _interfaceTypeMapper.GetOrAdd(interfaceType, ProxyFactory);
+      }
+    }
+    public Type GetProxyType<TInterface>()
+    {
+      return this.GetProxyType(typeof(TInterface));
     }
 
     public object GetProxyInstance(Type interfaceType)
     {
-      return Activator.CreateInstance(GetProxyType(interfaceType));
+      var type = GetProxyType(interfaceType);
+      return Activator.CreateInstance(type);
     }
 
     public object GetProxyInstance(Type interfaceType, object initialValues)
@@ -55,7 +67,7 @@ namespace DTCSEventPocoProxyGenerator
     public IEnumerable<object> GetProxyInstances(Type interfaceType, IEnumerable<object> initialValues)
     {
       var proxyType = GetProxyType(interfaceType);
-      return initialValues.Select(x=> Activator.CreateInstance(proxyType, x)).AsEnumerable();
+      return initialValues.Select(x => Activator.CreateInstance(proxyType, x)).AsEnumerable();
     }
 
     public IEnumerable<object> GetProxyInstances(Type interfaceType, IEnumerable<object> initialValues, List<MapperItem> columnNamePropertyNameMapper)
@@ -83,7 +95,7 @@ namespace DTCSEventPocoProxyGenerator
           now.Minute * 100 + now.Second)
       };
 
-      AssemblyBuilder assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
+      AssemblyBuilder assemblyBuilder = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.RunAndCollect);
 
       return assemblyBuilder.DefineDynamicModule($"{typeSignature}Module__");
     }
@@ -122,10 +134,18 @@ namespace DTCSEventPocoProxyGenerator
       tb.DefineDefaultConstructor(MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName | MethodAttributes.HideBySig);
 
       var baseDefaultConstructor = typeof(ProxyBaseClass)
-          .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-          .First(x => x.GetParameters().Length == 0);
-      var setFieldsFromMethod = typeof(ProxyBaseClass).GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
-          .First(x => x.Name == "SetFieldsFrom" && x.GetParameters().Length == 1 && x.GetParameters()[0].ParameterType == typeof(object));
+                .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
+                .First(x => x.GetParameters().Length == 0);
+
+      CreateObjectParameterConstructor(tb, baseDefaultConstructor);
+      CreateObjectWithMappingParameterConstructor(tb, baseDefaultConstructor);
+      CreateDataRowParameterConstructor(tb, baseDefaultConstructor);
+    }
+
+    private static void CreateObjectParameterConstructor(TypeBuilder tb, ConstructorInfo baseDefaultConstructor)
+    {
+
+      var setFieldsFromMethod = typeof(SetFields).GetMethod("FromObject");
 
       var constructor1 = tb.DefineConstructor(
           MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName | MethodAttributes.HideBySig,
@@ -146,6 +166,59 @@ namespace DTCSEventPocoProxyGenerator
       getIl.Emit(OpCodes.Ret);
     }
 
+    private static void CreateObjectWithMappingParameterConstructor(TypeBuilder tb, ConstructorInfo baseDefaultConstructor)
+    {
+
+      var setFieldsFromMethod = typeof(SetFields).GetMethod("FromObjectWithMapping");
+
+      var constructor1 = tb.DefineConstructor(
+          MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName | MethodAttributes.HideBySig,
+          CallingConventions.Standard,
+          new[] { typeof(object), typeof(List<MapperItem>) });
+
+      ILGenerator getIl = constructor1.GetILGenerator();
+
+      getIl.Emit(OpCodes.Ldarg_0);
+      getIl.Emit(OpCodes.Call, baseDefaultConstructor);
+      getIl.Emit(OpCodes.Nop);
+      getIl.Emit(OpCodes.Nop);
+
+      getIl.Emit(OpCodes.Ldarg_0);
+      getIl.Emit(OpCodes.Ldarg_1);
+      getIl.Emit(OpCodes.Ldarg_2);
+      getIl.Emit(OpCodes.Call, setFieldsFromMethod);
+      getIl.Emit(OpCodes.Nop);
+      getIl.Emit(OpCodes.Ret);
+    }
+
+
+    private static void CreateDataRowParameterConstructor(TypeBuilder tb, ConstructorInfo baseDefaultConstructor)
+    {
+
+      var setFieldsFromMethod = typeof(SetFields).GetMethod("FromDataRow");
+
+      var constructor1 = tb.DefineConstructor(
+          MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName | MethodAttributes.HideBySig,
+          CallingConventions.Standard,
+          new[] { typeof(DataRow), typeof(List<MapperItem>) });
+
+      ILGenerator getIl = constructor1.GetILGenerator();
+
+      getIl.Emit(OpCodes.Ldarg_0);
+      getIl.Emit(OpCodes.Call, baseDefaultConstructor);
+      getIl.Emit(OpCodes.Nop);
+      getIl.Emit(OpCodes.Nop);
+
+      getIl.Emit(OpCodes.Ldarg_0);
+      getIl.Emit(OpCodes.Ldarg_1);
+      getIl.Emit(OpCodes.Ldarg_2);
+      getIl.Emit(OpCodes.Call, setFieldsFromMethod);
+      getIl.Emit(OpCodes.Nop);
+      getIl.Emit(OpCodes.Ret);
+    }
+
+
+
     private void CreateProperty(TypeBuilder tb, PropertyInfo property)
     {
       // The property "set" and property "get" methods require a special
@@ -155,7 +228,7 @@ namespace DTCSEventPocoProxyGenerator
 
       FieldBuilder fieldBuilder = tb.DefineField("_" + property.Name, property.PropertyType, FieldAttributes.Private);
 
-      PropertyBuilder propertyBuilder = tb.DefineProperty(property.Name, PropertyAttributes.HasDefault, property.PropertyType, null);
+      PropertyBuilder propertyBuilder = tb.DefineProperty(property.Name, System.Reflection.PropertyAttributes.HasDefault, property.PropertyType, null);
 
       MethodBuilder getPropMthdBldr = tb.DefineMethod(
           "get_" + property.Name,
