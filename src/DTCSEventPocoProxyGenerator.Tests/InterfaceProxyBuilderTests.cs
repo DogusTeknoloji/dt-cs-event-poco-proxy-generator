@@ -38,6 +38,22 @@ namespace DTCSEventPocoProxyGenerator.Tests
     }
 
 
+    [Fact]
+    public void GetProxyInstance_NotNullInterfaceTypeParameterWithInitialData_Success()
+    {
+      var id = Guid.Parse("{6E25FEB7-771E-4194-BAA2-4184F54C4953}");
+      var source = new { Id = id, Name = "Alper" };
+
+      var result = CommonInstance.GetProxyInstance(typeof(IDemo1), source);
+      var typedResult = result as IDemo1;
+
+      result.ShouldNotBeNull();
+      (result is IDemo1).ShouldBeTrue();
+      typedResult.Id.ShouldBe(id);
+      typedResult.Name.ShouldBe(source.Name);
+    }
+
+
     public interface IDemo1
     {
       Guid Id { get; set; }

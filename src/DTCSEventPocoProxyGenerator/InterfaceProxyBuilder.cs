@@ -32,16 +32,13 @@ namespace DTCSEventPocoProxyGenerator
       }
     }
 
-    private static readonly object GetProxyTypeLock = new object();
 
     public Type GetProxyType(Type interfaceType)
     {
-      lock (GetProxyTypeLock)
-      {
-        if (interfaceType == null) throw new ArgumentNullException(nameof(interfaceType));
-        return _interfaceTypeMapper.GetOrAdd(interfaceType, ProxyFactory);
-      }
+      if (interfaceType == null) throw new ArgumentNullException(nameof(interfaceType));
+      return _interfaceTypeMapper.GetOrAdd(interfaceType, ProxyFactory);
     }
+
     public Type GetProxyType<TInterface>()
     {
       return this.GetProxyType(typeof(TInterface));
@@ -63,7 +60,6 @@ namespace DTCSEventPocoProxyGenerator
       return Activator.CreateInstance(GetProxyType(interfaceType), initialValues, columnNamePropertyNameMapper);
     }
 
-
     public IEnumerable<object> GetProxyInstances(Type interfaceType, IEnumerable<object> initialValues)
     {
       var proxyType = GetProxyType(interfaceType);
@@ -76,11 +72,15 @@ namespace DTCSEventPocoProxyGenerator
       return initialValues.Select(x => Activator.CreateInstance(proxyType, x, columnNamePropertyNameMapper)).AsEnumerable();
     }
 
+    private static readonly object ProxyFactoryLock = new object();
     private Type ProxyFactory(Type interfaceType)
     {
-      ModuleBuilder moduleBuilder =
-          CreateAssemblyAndModule($"__{interfaceType.Name}__Proxy__");
-      return CreateType(moduleBuilder, interfaceType);
+      lock (ProxyFactoryLock)
+      {
+        ModuleBuilder moduleBuilder =
+            CreateAssemblyAndModule($"__{interfaceType.Name}__Proxy__");
+        return CreateType(moduleBuilder, interfaceType);
+      }
     }
 
     private ModuleBuilder CreateAssemblyAndModule(string typeSignature)
@@ -125,7 +125,7 @@ namespace DTCSEventPocoProxyGenerator
       foreach (var property in interfaceType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         CreateProperty(tb, property);
 
-      Type objectType = tb.AsType();
+      Type objectType = tb.CreateTypeInfo().AsType();
       return objectType;
     }
 
@@ -144,7 +144,6 @@ namespace DTCSEventPocoProxyGenerator
 
     private static void CreateObjectParameterConstructor(TypeBuilder tb, ConstructorInfo baseDefaultConstructor)
     {
-
       var setFieldsFromMethod = typeof(SetFields).GetMethod("FromObject");
 
       var constructor1 = tb.DefineConstructor(
@@ -168,7 +167,6 @@ namespace DTCSEventPocoProxyGenerator
 
     private static void CreateObjectWithMappingParameterConstructor(TypeBuilder tb, ConstructorInfo baseDefaultConstructor)
     {
-
       var setFieldsFromMethod = typeof(SetFields).GetMethod("FromObjectWithMapping");
 
       var constructor1 = tb.DefineConstructor(
@@ -191,10 +189,8 @@ namespace DTCSEventPocoProxyGenerator
       getIl.Emit(OpCodes.Ret);
     }
 
-
     private static void CreateDataRowParameterConstructor(TypeBuilder tb, ConstructorInfo baseDefaultConstructor)
     {
-
       var setFieldsFromMethod = typeof(SetFields).GetMethod("FromDataRow");
 
       var constructor1 = tb.DefineConstructor(
@@ -216,8 +212,6 @@ namespace DTCSEventPocoProxyGenerator
       getIl.Emit(OpCodes.Nop);
       getIl.Emit(OpCodes.Ret);
     }
-
-
 
     private void CreateProperty(TypeBuilder tb, PropertyInfo property)
     {
